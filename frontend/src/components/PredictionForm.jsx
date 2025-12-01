@@ -26,6 +26,9 @@ const PredictionForm = () => {
   const [activeTab, setActiveTab] = useState('history') // 'history' | 'quote' | 'indicators' | 'predict'
   const indChartRef = useRef(null)
   const indChartInstanceRef = useRef(null)
+  const [featureCols, setFeatureCols] = useState([])
+  const [featureColsLoading, setFeatureColsLoading] = useState(false)
+  const [marketTicker, setMarketTicker] = useState('')
 
   useEffect(() => {
     if (!predictions || predictions.length === 0) {
@@ -111,6 +114,8 @@ const PredictionForm = () => {
     const labels = ordered.map((r) => r.date)
     const close = ordered.map((r) => (r.close ?? null))
     const sma20 = ordered.map((r) => (r.sma_20 ?? null))
+    const sma50 = ordered.map((r) => (r.sma_50 ?? null))
+    const ema20 = ordered.map((r) => (r.ema_20 ?? null))
     const bbUpper = ordered.map((r) => (r.bb_upper ?? null))
     const bbLower = ordered.map((r) => (r.bb_lower ?? null))
 
@@ -121,8 +126,10 @@ const PredictionForm = () => {
       indChartInstanceRef.current.data.labels = labels
       indChartInstanceRef.current.data.datasets[0].data = close
       indChartInstanceRef.current.data.datasets[1].data = sma20
-      indChartInstanceRef.current.data.datasets[2].data = bbUpper
-      indChartInstanceRef.current.data.datasets[3].data = bbLower
+      indChartInstanceRef.current.data.datasets[2].data = sma50
+      indChartInstanceRef.current.data.datasets[3].data = ema20
+      indChartInstanceRef.current.data.datasets[4].data = bbUpper
+      indChartInstanceRef.current.data.datasets[5].data = bbLower
       indChartInstanceRef.current.update()
       return
     }
@@ -146,6 +153,23 @@ const PredictionForm = () => {
             borderColor: '#2563eb',
             backgroundColor: 'rgba(37,99,235,0.05)',
             borderWidth: 2,
+            tension: 0.2,
+          },
+          {
+            label: 'SMA 50',
+            data: sma50,
+            borderColor: '#7c3aed',
+            backgroundColor: 'rgba(124,58,237,0.05)',
+            borderWidth: 1.5,
+            tension: 0.2,
+          },
+          {
+            label: 'EMA 20',
+            data: ema20,
+            borderColor: '#dc2626',
+            backgroundColor: 'rgba(220,38,38,0.05)',
+            borderWidth: 1.5,
+            borderDash: [2, 2],
             tension: 0.2,
           },
           {
@@ -203,6 +227,9 @@ const PredictionForm = () => {
         window: modelWindow !== '' ? Number(modelWindow) : undefined,
         alpha: modelType === 'ridge' && ridgeAlpha !== '' ? Number(ridgeAlpha) : undefined,
       }
+      if (marketTicker.trim()) {
+        body.market_ticker = marketTicker.trim()
+      }
       if (mode === 'manual') {
         body.mode = 'manual'
         body.base_price = basePrice !== '' ? Number(basePrice) : undefined
@@ -235,6 +262,33 @@ const PredictionForm = () => {
       setError(err.message || 'An error occurred')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleFetchFeatureColumns = async () => {
+    setError(null)
+    setFeatureColsLoading(true)
+    setFeatureCols([])
+    try {
+      const body = { ticker, frequency, window: modelWindow !== '' ? Number(modelWindow) : undefined }
+      if (marketTicker.trim()) {
+        body.market_ticker = marketTicker.trim()
+      }
+      const res = await fetch('http://localhost:5000/api/features-columns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setFeatureCols(data.columns || [])
+    } catch (err) {
+      setError(err.message || 'Failed to fetch feature columns')
+    } finally {
+      setFeatureColsLoading(false)
     }
   }
 
@@ -317,32 +371,49 @@ const PredictionForm = () => {
 
   return (
     <div className="container">
-      <h1>Stock Price Prediction</h1>
-      <p>Get AI-powered predictions for NSE stocks</p>
-
-      {/* Shared inputs */}
-      <div className="form-group">
-        <label htmlFor="ticker">Stock Ticker (NSE)</label>
-        <input
-          id="ticker"
-          type="text"
-          value={ticker}
-          onChange={(e) => setTicker(e.target.value)}
-          placeholder="e.g., RELIANCE, TCS, INFY"
-          required
-        />
-        <small>Enter ticker without .NS suffix</small>
+      <div className="header-section">
+        <h1 className="main-title">📈 Stock Price Prediction</h1>
+        <p className="subtitle">Advanced ML-powered predictions with 65+ technical indicators for NSE stocks</p>
       </div>
 
-      <div className="form-group">
-        <label htmlFor="frequency">Frequency</label>
-        <select id="frequency" value={frequency} onChange={(e)=>setFrequency(e.target.value)}>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-        </select>
-        <small>Determines whether the API fetches daily, weekly, or monthly data</small>
-      </div>
+      <div className="form-container">
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label" htmlFor="ticker">
+              <span className="label-text">📊 Stock Ticker (NSE)</span>
+              <span className="label-required">*</span>
+            </label>
+            <input
+              id="ticker"
+              type="text"
+              className="form-input primary"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value)}
+              placeholder="e.g., RELIANCE, TCS, INFY"
+              required
+            />
+            <small className="text-sm mt-1">Enter ticker without .NS suffix</small>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="frequency">
+              <span className="label-text">⏱️ Frequency</span>
+            </label>
+            <select 
+              id="frequency" 
+              className="form-select"
+              value={frequency} 
+              onChange={(e)=>setFrequency(e.target.value)}
+            >
+              <option value="daily">📅 Daily</option>
+              <option value="weekly">📆 Weekly</option>
+              <option value="monthly">🗓️ Monthly</option>
+            </select>
+            <small className="text-sm mt-1">Determines whether the API fetches daily, weekly, or monthly data</small>
+          </div>
+        </div>
+
+        <div className="form-row">\n          <div className="form-group">
 
       <div className="form-group">
         <label htmlFor="avFunction">Alpha Vantage Function</label>
@@ -354,40 +425,58 @@ const PredictionForm = () => {
         <small>Exact AV function used for history fetch (uses .env API key by default)</small>
       </div>
 
+      <div className="form-group">
+        <label htmlFor="marketTicker">Market Index Ticker (Optional)</label>
+        <input
+          id="marketTicker"
+          type="text"
+          value={marketTicker}
+          onChange={(e) => setMarketTicker(e.target.value)}
+          placeholder="e.g., NIFTY, SENSEX, SPY"
+        />
+        <small>For correlation analysis. Leave empty to skip market correlation features.</small>
+      </div>
+
       {/* Tabs */}
-      <div className="tabs" role="tablist" aria-label="Data views">
-        <button
-          role="tab"
-          aria-selected={activeTab==='history'}
-          className={`tab ${activeTab==='history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
-        >
-          History
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab==='quote'}
-          className={`tab ${activeTab==='quote' ? 'active' : ''}`}
-          onClick={() => setActiveTab('quote')}
-        >
-          Quote
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab==='indicators'}
-          className={`tab ${activeTab==='indicators' ? 'active' : ''}`}
-          onClick={() => setActiveTab('indicators')}
-        >
-          Indicators
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab==='predict'}
-          className={`tab ${activeTab==='predict' ? 'active' : ''}`}
-          onClick={() => setActiveTab('predict')}
-        >
-          Predictions
-        </button>
+      <div className="tabs-container">
+        <div className="tabs" role="tablist" aria-label="Data views">
+          <button
+            role="tab"
+            aria-selected={activeTab==='history'}
+            className={`tab-button ${activeTab==='history' ? 'active' : ''}`}
+            onClick={() => setActiveTab('history')}
+          >
+            <span className="tab-icon">📈</span>
+            <span className="tab-label">History</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab==='quote'}
+            className={`tab-button ${activeTab==='quote' ? 'active' : ''}`}
+            onClick={() => setActiveTab('quote')}
+          >
+            <span className="tab-icon">💰</span>
+            <span className="tab-label">Quote</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab==='indicators'}
+            className={`tab-button ${activeTab==='indicators' ? 'active' : ''}`}
+            onClick={() => setActiveTab('indicators')}
+          >
+            <span className="tab-icon">⚡</span>
+            <span className="tab-label">Indicators</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab==='predict'}
+            className={`tab-button ${activeTab==='predict' ? 'active' : ''}`}
+            onClick={() => setActiveTab('predict')}
+          >
+            <span className="tab-icon">🔮</span>
+            <span className="tab-label">Predict</span>
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -415,18 +504,27 @@ const PredictionForm = () => {
       {/* History Tab */}
       {activeTab === 'history' && (
         <div className="tab-panel" role="tabpanel" aria-labelledby="history">
-          <div className="button-row" style={{marginBottom:'12px'}}>
+          <div className="action-buttons">
             <button type="button" className="btn secondary" onClick={handleFetchHistory} disabled={loading}>
-              {loading ? 'Fetching...' : 'Fetch History'}
+              {loading ? (
+                <>
+                  <span className="loading-spinner"></span>
+                  Fetching History...
+                </>
+              ) : (
+                <>
+                  📊 Fetch History
+                </>
+              )}
             </button>
           </div>
           {history.rows && history.rows.length > 0 && (
         <div className="results">
           <h3>History for {ticker.toUpperCase()} ({history.rows.length} rows)</h3>
-          <p style={{fontSize:'0.9rem'}}>
+          <p className="text-sm mb-3">
             Provider: {history.provider || 'alphavantage'} | Function: {avFunction} | URL: {history.url}
           </p>
-          <div style={{overflowX:'auto'}}>
+          <div className="table-container">
             <table className="results-table">
               <thead>
                 <tr>
@@ -496,15 +594,37 @@ const PredictionForm = () => {
           </div>
           {/* About indicators */}
           <details style={{marginBottom:'12px'}}>
-            <summary><strong>About these indicators</strong></summary>
+            <summary><strong>About Technical Indicators (65+ Features Calculated)</strong></summary>
             <div style={{marginTop:'8px', lineHeight:1.5}}>
-              <p><strong>SMA (Simple Moving Average)</strong>: The arithmetic mean of the last N closes. Example: SMA(20) is the average of the last 20 closing prices.</p>
-              <p><strong>EMA (Exponential Moving Average)</strong>: A moving average that weights recent prices more, using multiplier k = 2/(N+1). EMA reacts faster than SMA.</p>
-              <p><strong>RSI (Relative Strength Index)</strong>: Momentum oscillator from 0–100. RSI = 100 - 100/(1 + RS), where RS is the ratio of average gains to average losses over 14 periods (Wilder's smoothing). Overbought &gt; 70, oversold &lt; 30 (common heuristics).</p>
-              <p><strong>MACD</strong>: MACD = EMA(12) - EMA(26). Signal = EMA(9) of MACD. Histogram = MACD - Signal. Shows momentum shifts via line crossovers and histogram expansions.</p>
-              <p><strong>Bollinger Bands</strong>: Mid = SMA(20); Upper = Mid + 2×StdDev(20); Lower = Mid - 2×StdDev(20). Width = (Upper - Lower) / Mid. Bands expand with volatility and contract when quiet.</p>
-              <p><strong>ATR (Average True Range)</strong>: Measures volatility. True Range = max(high-low, |high-prevClose|, |low-prevClose|). ATR is the average of TR over 14 periods.</p>
-              <p><strong>OBV (On-Balance Volume)</strong>: Cumulative volume adding when price closes up and subtracting when price closes down. Attempts to capture volume flow direction.</p>
+              <h4>🔄 Trend Indicators (8 features)</h4>
+              <p><strong>SMA (5,10,20,50)</strong>: Simple Moving Average - arithmetic mean of last N closes</p>
+              <p><strong>EMA (12,20,26,50)</strong>: Exponential Moving Average - weights recent prices more heavily</p>
+              
+              <h4>⚡ Momentum Indicators (10 features)</h4>
+              <p><strong>RSI 14</strong>: Relative Strength Index (0-100) - overbought &gt;70, oversold &lt;30</p>
+              <p><strong>MACD Suite</strong>: MACD = EMA(12) - EMA(26), Signal = EMA(9) of MACD, Histogram = MACD - Signal</p>
+              <p><strong>Stochastic %K/%D</strong>: Oscillator showing position within recent high-low range</p>
+              <p><strong>ADX & DI</strong>: Average Directional Index + Plus/Minus Directional Indicators</p>
+              
+              <h4>📊 Volatility Indicators (11 features)</h4>
+              <p><strong>True Range & ATR 14</strong>: Measures market volatility using EMA of True Range</p>
+              <p><strong>Bollinger Bands</strong>: SMA(20) ± 2×StdDev bands, width shows volatility expansion</p>
+              <p><strong>Rolling Stats</strong>: Standard deviation, skewness, kurtosis, z-scores of price</p>
+              
+              <h4>📈 Volume Indicators (6 features)</h4>
+              <p><strong>OBV</strong>: On-Balance Volume - cumulative volume flow based on price direction</p>
+              <p><strong>MFI 14</strong>: Money Flow Index - volume-weighted RSI</p>
+              <p><strong>Volume Spike</strong>: Current volume vs 20-period average</p>
+              
+              <h4>💹 Price Action & Patterns (21+ features)</h4>
+              <p><strong>Price Percentages</strong>: (High-Low)/Open%, (Close-Open)/Open%, daily returns</p>
+              <p><strong>Lag Features</strong>: Previous close values (1,3,5,10 periods back)</p>
+              <p><strong>Candle Patterns</strong>: Doji, bullish/bearish engulfing patterns</p>
+              <p><strong>Support/Resistance</strong>: Rolling min/max levels, breakout/breakdown signals</p>
+              
+              <h4>🔗 Advanced Features</h4>
+              <p><strong>Market Correlation</strong>: 20-period rolling correlation with market index (if provided)</p>
+              <p><strong>Regime Detection</strong>: Trend vs range-bound market classification</p>
             </div>
           </details>
           {indicators.rows && indicators.rows.length > 0 && (
@@ -520,44 +640,60 @@ const PredictionForm = () => {
                   <th>Date</th>
                   <th>Close</th>
                   <th>SMA 5</th>
-                  <th>SMA 10</th>
                   <th>SMA 20</th>
+                  <th>SMA 50</th>
                   <th>EMA 12</th>
                   <th>EMA 20</th>
-                  <th>EMA 26</th>
+                  <th>EMA 50</th>
                   <th>RSI 14</th>
                   <th>MACD</th>
                   <th>Signal</th>
                   <th>Hist</th>
-                  <th>BB Mid</th>
+                  <th>Stoch %K</th>
+                  <th>Stoch %D</th>
                   <th>BB Upper</th>
                   <th>BB Lower</th>
                   <th>BB Width</th>
                   <th>ATR 14</th>
+                  <th>True Range</th>
+                  <th>ADX 14</th>
+                  <th>+DI 14</th>
+                  <th>-DI 14</th>
+                  <th>Volume Spike</th>
                   <th>OBV</th>
+                  <th>MFI 14</th>
+                  <th>Corr Index</th>
                 </tr>
               </thead>
               <tbody>
                 {indicators.rows.slice().reverse().map((row) => (
                   <tr key={row.date}>
                     <td>{row.date}</td>
-                    <td>{row.close ?? '-'}</td>
-                    <td>{row.sma_5 ?? '-'}</td>
-                    <td>{row.sma_10 ?? '-'}</td>
-                    <td>{row.sma_20 ?? '-'}</td>
-                    <td>{row.ema_12 ?? '-'}</td>
-                    <td>{row.ema_20 ?? '-'}</td>
-                    <td>{row.ema_26 ?? '-'}</td>
-                    <td>{row.rsi_14 ?? '-'}</td>
-                    <td>{row.macd ?? '-'}</td>
-                    <td>{row.macd_signal ?? '-'}</td>
-                    <td>{row.macd_hist ?? '-'}</td>
-                    <td>{row.bb_mid ?? '-'}</td>
-                    <td>{row.bb_upper ?? '-'}</td>
-                    <td>{row.bb_lower ?? '-'}</td>
-                    <td>{row.bb_width ?? '-'}</td>
-                    <td>{row.atr_14 ?? '-'}</td>
-                    <td>{row.obv ?? '-'}</td>
+                    <td>{row.close ? parseFloat(row.close).toFixed(2) : '-'}</td>
+                    <td>{row.sma_5 ? parseFloat(row.sma_5).toFixed(2) : '-'}</td>
+                    <td>{row.sma_20 ? parseFloat(row.sma_20).toFixed(2) : '-'}</td>
+                    <td>{row.sma_50 ? parseFloat(row.sma_50).toFixed(2) : '-'}</td>
+                    <td>{row.ema_12 ? parseFloat(row.ema_12).toFixed(2) : '-'}</td>
+                    <td>{row.ema_20 ? parseFloat(row.ema_20).toFixed(2) : '-'}</td>
+                    <td>{row.ema_50 ? parseFloat(row.ema_50).toFixed(2) : '-'}</td>
+                    <td>{row.rsi_14 ? parseFloat(row.rsi_14).toFixed(2) : '-'}</td>
+                    <td>{row.macd ? parseFloat(row.macd).toFixed(3) : '-'}</td>
+                    <td>{row.macd_signal ? parseFloat(row.macd_signal).toFixed(3) : '-'}</td>
+                    <td>{row.macd_hist ? parseFloat(row.macd_hist).toFixed(3) : '-'}</td>
+                    <td>{row.stoch_k_14 ?? row.stoch_k ? parseFloat(row.stoch_k_14 ?? row.stoch_k).toFixed(2) : '-'}</td>
+                    <td>{row.stoch_d_3 ?? row.stoch_d ? parseFloat(row.stoch_d_3 ?? row.stoch_d).toFixed(2) : '-'}</td>
+                    <td>{row.bb_upper ? parseFloat(row.bb_upper).toFixed(2) : '-'}</td>
+                    <td>{row.bb_lower ? parseFloat(row.bb_lower).toFixed(2) : '-'}</td>
+                    <td>{row.bb_width ? parseFloat(row.bb_width).toFixed(4) : '-'}</td>
+                    <td>{row.atr_14 ? parseFloat(row.atr_14).toFixed(2) : '-'}</td>
+                    <td>{row.tr ? parseFloat(row.tr).toFixed(2) : '-'}</td>
+                    <td>{row.adx_14 ? parseFloat(row.adx_14).toFixed(2) : '-'}</td>
+                    <td>{row.plus_di_14 ?? row.di_pos_14 ? parseFloat(row.plus_di_14 ?? row.di_pos_14).toFixed(2) : '-'}</td>
+                    <td>{row.minus_di_14 ?? row.di_neg_14 ? parseFloat(row.minus_di_14 ?? row.di_neg_14).toFixed(2) : '-'}</td>
+                    <td>{row.volume_spike ?? row.vol_spike ? parseFloat(row.volume_spike ?? row.vol_spike).toFixed(2) : '-'}</td>
+                    <td>{row.obv ? parseFloat(row.obv).toFixed(0) : '-'}</td>
+                    <td>{row.mfi_14 ? parseFloat(row.mfi_14).toFixed(2) : '-'}</td>
+                    <td>{row.corr_with_index_20 ? parseFloat(row.corr_with_index_20).toFixed(3) : '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -649,8 +785,92 @@ const PredictionForm = () => {
               <button type="submit" className="btn" disabled={loading}>
                 {loading ? 'Predicting...' : 'Get Predictions'}
               </button>
+              <button type="button" className="btn secondary" onClick={handleFetchFeatureColumns} disabled={featureColsLoading}>
+                {featureColsLoading ? 'Loading...' : 'Show Feature Columns'}
+              </button>
             </div>
           </form>
+
+          {featureCols && featureCols.length > 0 && (
+            <div className="results">
+              <h3>Model Feature Columns ({featureCols.length})</h3>
+              <details style={{marginBottom:'12px'}}>
+                <summary><strong>All Feature Categories (65+ Features)</strong></summary>
+                <div style={{marginTop:'8px', lineHeight:1.5}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(250px, 1fr))',gap:'12px'}}>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>🔄 Trend (8 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>sma_5, sma_10, sma_20, sma_50<br/>ema_12, ema_20, ema_26, ema_50</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>⚡ Momentum (10 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>rsi_14, macd, macd_signal, macd_hist<br/>stoch_k_14, stoch_d_3, stoch_k, stoch_d<br/>adx_14, regime_trend</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>📊 Volatility (11 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>tr, atr_14, bb_mid, bb_upper, bb_lower, bb_width<br/>rolling_std_10, rolling_std_20, rolling_skew_10<br/>rolling_kurt_10, rolling_zscore_10</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>📈 Volume (6 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>obv, mfi_14, vol_sma_20<br/>volume_spike, vol_spike, volume</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>💹 Price Action (6 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>hl_pct, co_pct, cp_pct<br/>ret_1, ret_5, close</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>⏰ Lags & History (8 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>close_lag_1, close_lag_3, close_lag_5, close_lag_10<br/>lag_1, lag_3, lag_5, lag_10</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>🎯 Directional (4 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>plus_di_14, minus_di_14<br/>di_pos_14, di_neg_14</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>🕯️ Patterns (7 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>doji, bull_engulf, bear_engulf<br/>support_20, resistance_20, breakout, breakdown</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>🔗 Correlation (2 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>corr_with_index_20, market_index</p>
+                    </div>
+                    <div>
+                      <h4 style={{margin:'0 0 4px 0',color:'#1f2937'}}>📋 Base Data (3 features)</h4>
+                      <p style={{fontSize:'0.85rem',margin:'0'}}>open, high, low</p>
+                    </div>
+                  </div>
+                  <p style={{marginTop:'12px',fontSize:'0.9rem',fontStyle:'italic'}}>Total: 65+ features calculated for comprehensive market analysis</p>
+                </div>
+              </details>
+              <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:'6px'}}>
+                {featureCols.map((c) => {
+                  let category = 'Other'
+                  let color = '#f3f4f6'
+                  let icon = '📊'
+                  if (c.includes('sma_') || c.includes('ema_')) { category = 'Trend'; color = '#dbeafe'; icon = '🔄' }
+                  else if (c.includes('rsi_') || c.includes('macd') || c.includes('stoch_') || c.includes('adx_') || c.includes('regime_')) { category = 'Momentum'; color = '#fef3c7'; icon = '⚡' }
+                  else if (c.includes('atr_') || c.includes('tr') || c.includes('bb_') || c.includes('rolling_')) { category = 'Volatility'; color = '#fecaca'; icon = '📊' }
+                  else if (c.includes('obv') || c.includes('mfi_') || c.includes('vol_') || c.includes('volume_')) { category = 'Volume'; color = '#d1fae5'; icon = '📈' }
+                  else if (c.includes('_pct') || c.includes('ret_') || c === 'close') { category = 'Price Action'; color = '#e0e7ff'; icon = '💹' }
+                  else if (c.includes('lag_') || c.includes('close_lag_')) { category = 'Lags'; color = '#f3e8ff'; icon = '⏰' }
+                  else if (c.includes('di_') || c.includes('plus_') || c.includes('minus_')) { category = 'Directional'; color = '#fde68a'; icon = '🎯' }
+                  else if (c.includes('doji') || c.includes('engulf') || c.includes('support') || c.includes('resistance') || c.includes('breakout') || c.includes('breakdown')) { category = 'Patterns'; color = '#e5e7eb'; icon = '🕯️' }
+                  else if (c.includes('corr_') || c === 'market_index') { category = 'Correlation'; color = '#fed7d7'; icon = '🔗' }
+                  else if (c.includes('f_')) { category = 'Fundamentals'; color = '#fdf2f8'; icon = '💰' }
+                  else if (c === 'open' || c === 'high' || c === 'low') { category = 'Base Data'; color = '#f9fafb'; icon = '📋' }
+                  return (
+                    <div key={c} style={{border:'1px solid #d1d5db', borderRadius:6, padding:'8px', backgroundColor:color, fontSize:'0.8rem', transition:'all 0.2s'}}>
+                      <div style={{fontWeight:600, fontSize:'0.7rem', color:'#4b5563', marginBottom:'3px', display:'flex', alignItems:'center', gap:'4px'}}>
+                        <span>{icon}</span>
+                        {category}
+                      </div>
+                      <div style={{fontFamily:'monospace', fontSize:'0.8rem', color:'#1f2937'}}>{c}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {predictions && predictions.length > 0 && (
         <div className="results">
@@ -724,6 +944,9 @@ const PredictionForm = () => {
           )}
         </div>
       )}
+    </div>
+    </div>
+    </div>
     </div>
   )
 }

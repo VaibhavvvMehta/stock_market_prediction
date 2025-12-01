@@ -90,6 +90,7 @@ def load_and_predict(ticker: str, days: int = 5, manual: dict = None, frequency:
         # capture request-scoped model/api params
         mp = app.config.get('_MODEL_PARAMS', {}) if hasattr(app, 'config') else {}
         api_key = mp.get('api_key') if isinstance(mp, dict) else None
+        market_ticker = mp.get('market_ticker') if isinstance(mp, dict) else None
 
         ind_latest = None
 
@@ -242,6 +243,15 @@ def load_and_predict(ticker: str, days: int = 5, manual: dict = None, frequency:
                 LOG.exception('fetch_fundamentals_av failed for %s', raw_ticker)
                 fundamentals = {}
 
+            # Optional market index correlation: fetch market_ticker history and attach market_close series
+            if market_ticker:
+                try:
+                    m_hist = fetch_history(market_ticker.strip().upper(), period='120d', frequency=frequency, outputsize='full', api_key=api_key)
+                    if m_hist is not None and not m_hist.empty:
+                        fundamentals['market_close'] = m_hist['close'].astype(float) if 'close' in m_hist.columns else None
+                except Exception:
+                    LOG.exception('fetch_history for market_ticker failed: %s', market_ticker)
+
             # Use ML-based predictions relying solely on provider data; if ML unavailable/insufficient, fall back to deterministic drift from API data
             try:
                 mp = app.config.get('_MODEL_PARAMS', {})
@@ -307,6 +317,7 @@ def predict_route():
     mode = (payload.get('mode') or 'ml').lower()
     frequency = (payload.get('frequency') or 'daily').lower()
     api_key = payload.get('api_key')
+    market_ticker = payload.get('market_ticker')
     manual = None
     # Model params (optional)
     model_type = (payload.get('model') or 'ridge').lower() if isinstance(payload.get('model'), str) else (payload.get('model', {}).get('type', 'ridge') if isinstance(payload.get('model'), dict) else 'ridge')
@@ -330,7 +341,7 @@ def predict_route():
 
     # Attach model params onto Flask global via closure not ideal; pass through in request context via globals
     # Simpler: temporarily set on app config for this call
-    app.config['_MODEL_PARAMS'] = {'model_type': model_type, 'window': window, 'ridge_alpha': ridge_alpha, 'api_key': api_key}
+    app.config['_MODEL_PARAMS'] = {'model_type': model_type, 'window': window, 'ridge_alpha': ridge_alpha, 'api_key': api_key, 'market_ticker': market_ticker}
     result = load_and_predict(ticker, days_int, manual=manual, frequency=frequency)
     app.config.pop('_MODEL_PARAMS', None)
     status = 200 if result.get('error') is None else 500
@@ -529,6 +540,60 @@ def api_indicators():
             'url': meta.get('url'),
             'rows': rows,
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/features-columns', methods=['POST'])
+def api_features_columns():
+    """Return the final feature columns used for model training given the current request.
+    Body: { ticker, frequency?, window?, market_ticker? }
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    ticker = (payload.get('ticker') or '').strip()
+    frequency = (payload.get('frequency') or 'daily').lower()
+    window = payload.get('window')
+    market_ticker = payload.get('market_ticker')
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+    try:
+        # Fetch asset history
+        result = fetch_history(
+            ticker.upper(),
+            period='120d',
+            frequency=frequency,
+            outputsize='full',
+            return_metadata=False,
+        )
+        df = result if not isinstance(result, tuple) else result[0]
+        if df is None or df.empty:
+            return jsonify({"error": "no history available from provider"}), 500
+
+        fundamentals = {}
+        # Optional market correlation
+        if market_ticker:
+            try:
+                m_hist = fetch_history(market_ticker.strip().upper(), period='120d', frequency=frequency, outputsize='full')
+                if m_hist is not None and not m_hist.empty and 'close' in m_hist.columns:
+                    fundamentals['market_close'] = m_hist['close'].astype(float)
+            except Exception:
+                pass
+
+        # Build features and simulate training slice
+        try:
+            from .features import assemble_features
+        except Exception:
+            import features  # type: ignore
+            assemble_features = features.assemble_features  # type: ignore[attr-defined]
+
+        feats = assemble_features(df, fundamentals)
+        if isinstance(window, int) and window > 0 and len(feats) > window:
+            feats = feats.iloc[-window:].copy()
+        # Add target for inspection then drop
+        feats['target'] = feats['close'].shift(-1)
+        feats = feats.dropna().copy()
+        cols = [c for c in feats.columns if c != 'target']
+        return jsonify({"columns": cols, "count": len(cols)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
